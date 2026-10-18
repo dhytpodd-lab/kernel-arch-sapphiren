@@ -1,0 +1,220 @@
+From: Antigravity <antigravity@local>
+Subject: [PATCH] usb: dwc3: qcom: restore ACPI support for QCOM0497
+
+When booting via ACPI (e.g. Mu-Silicium UEFI), USB controller is described
+as URS0 with HID QCOM0497 and child device USB0.
+Restore ACPI matching and configure host mode so USB keyboards and devices
+work out of the box under ACPI.
+
+Signed-off-by: Antigravity <antigravity@local>
+---
+ drivers/usb/dwc3/dwc3-qcom.c | 65 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 61 insertions(+), 4 deletions(-)
+
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -20,6 +20,7 @@
+ #include <linux/usb/hcd.h>
+ #include <linux/usb.h>
+ #include "core.h"
++#include <linux/acpi.h>
+ #include "glue.h"
+ 
+ /* USB QSCRATCH Hardware registers */
+@@ -132,6 +133,9 @@
+ {
+ 	int ret;
+ 
++	if (has_acpi_companion(qcom->dev))
++		return 0;
++
+ 	ret = icc_enable(qcom->icc_path_ddr);
+ 	if (ret)
+ 		return ret;
+@@ -146,6 +150,9 @@
+ static int dwc3_qcom_interconnect_disable(struct dwc3_qcom *qcom)
+ {
+ 	int ret;
++
++	if (has_acpi_companion(qcom->dev))
++		return 0;
+ 
+ 	ret = icc_disable(qcom->icc_path_ddr);
+ 	if (ret)
+@@ -169,6 +176,9 @@
+ 	enum usb_device_speed max_speed;
+ 	struct device *dev = qcom->dev;
+ 	int ret;
++
++	if (has_acpi_companion(dev))
++		return 0;
+ 
+ 	qcom->icc_path_ddr = of_icc_get(dev, "usb-ddr");
+ 	if (IS_ERR(qcom->icc_path_ddr)) {
+@@ -624,34 +634,36 @@
+ 
+ 	qcom->dev = &pdev->dev;
+ 
+-	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
+-	if (IS_ERR(qcom->resets)) {
+-		return dev_err_probe(&pdev->dev, PTR_ERR(qcom->resets),
+-				     "failed to get resets\n");
+-	}
+-
+-	ret = devm_clk_bulk_get_all(&pdev->dev, &qcom->clks);
+-	if (ret < 0)
+-		return dev_err_probe(dev, ret, "failed to get clocks\n");
+-	qcom->num_clocks = ret;
+-
+-	ret = reset_control_assert(qcom->resets);
+-	if (ret) {
+-		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
+-		return ret;
+-	}
+-
+-	usleep_range(10, 1000);
+-
+-	ret = reset_control_deassert(qcom->resets);
+-	if (ret) {
+-		dev_err(&pdev->dev, "failed to deassert resets, err=%d\n", ret);
+-		return ret;
+-	}
+-
+-	ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
+-	if (ret < 0)
+-		return ret;
++	if (!has_acpi_companion(dev)) {
++		qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
++		if (IS_ERR(qcom->resets)) {
++			return dev_err_probe(&pdev->dev, PTR_ERR(qcom->resets),
++					     "failed to get resets\n");
++		}
++
++		ret = devm_clk_bulk_get_all(&pdev->dev, &qcom->clks);
++		if (ret < 0)
++			return dev_err_probe(dev, ret, "failed to get clocks\n");
++		qcom->num_clocks = ret;
++
++		ret = reset_control_assert(qcom->resets);
++		if (ret) {
++			dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
++			return ret;
++		}
++
++		usleep_range(10, 1000);
++
++		ret = reset_control_deassert(qcom->resets);
++		if (ret) {
++			dev_err(&pdev->dev, "failed to deassert resets, err=%d\n", ret);
++			return ret;
++		}
++
++		ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
++		if (ret < 0)
++			return ret;
++	}
+ 
+ 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!r) {
+@@ -668,10 +680,12 @@
+ 		goto clk_disable;
+ 	}
+ 
+-	ret = dwc3_qcom_setup_irq(qcom, pdev);
+-	if (ret) {
+-		dev_err(dev, "failed to setup IRQs, err=%d\n", ret);
+-		goto clk_disable;
++	if (!has_acpi_companion(dev)) {
++		ret = dwc3_qcom_setup_irq(qcom, pdev);
++		if (ret) {
++			dev_err(dev, "failed to setup IRQs, err=%d\n", ret);
++			goto clk_disable;
++		}
+ 	}
+ 
+ 	/*
+@@ -683,19 +697,49 @@
+ 	if (ignore_pipe_clk)
+ 		dwc3_qcom_select_utmi_clk(qcom);
+ 
+-	qcom->mode = usb_get_dr_mode(dev);
+-
+-	if (qcom->mode == USB_DR_MODE_HOST) {
++	if (has_acpi_companion(dev)) {
++		qcom->mode = USB_DR_MODE_HOST;
+ 		qcom->current_role = USB_ROLE_HOST;
+-	} else if (qcom->mode == USB_DR_MODE_PERIPHERAL) {
+-		qcom->current_role = USB_ROLE_DEVICE;
+-		dwc3_qcom_vbus_override_enable(qcom, true);
++#ifdef CONFIG_ACPI
++		{
++			int irq = platform_get_irq(pdev, 0);
++			if (irq < 0) {
++				struct fwnode_handle *fwh = fwnode_get_named_child_node(dev->fwnode, "USB0");
++				if (fwh) {
++					struct acpi_device *adev = to_acpi_device_node(fwh);
++					if (adev) {
++						struct platform_device *urs_usb = acpi_create_platform_device(adev, NULL);
++						if (!IS_ERR_OR_NULL(urs_usb))
++							irq = platform_get_irq(urs_usb, 0);
++					}
++					fwnode_handle_put(fwh);
++				}
++			}
++			if (irq > 0) {
++				struct resource r_irq = {
++					.start = irq,
++					.end = irq,
++					.flags = IORESOURCE_IRQ,
++				};
++				platform_device_add_resources(pdev, &r_irq, 1);
++			}
++		}
++#endif
+ 	} else {
+-		if ((device_property_read_bool(dev, "usb-role-switch")) &&
+-		    (usb_get_role_switch_default_mode(dev) == USB_DR_MODE_HOST))
++		qcom->mode = usb_get_dr_mode(dev);
++
++		if (qcom->mode == USB_DR_MODE_HOST) {
+ 			qcom->current_role = USB_ROLE_HOST;
+-		else
++		} else if (qcom->mode == USB_DR_MODE_PERIPHERAL) {
+ 			qcom->current_role = USB_ROLE_DEVICE;
++			dwc3_qcom_vbus_override_enable(qcom, true);
++		} else {
++			if ((device_property_read_bool(dev, "usb-role-switch")) &&
++			    (usb_get_role_switch_default_mode(dev) == USB_DR_MODE_HOST))
++				qcom->current_role = USB_ROLE_HOST;
++			else
++				qcom->current_role = USB_ROLE_DEVICE;
++		}
+ 	}
+ 
+ 	qcom->dwc.glue_ops = &dwc3_qcom_glue_ops;
+@@ -844,6 +888,17 @@
+ };
+ MODULE_DEVICE_TABLE(of, dwc3_qcom_of_match);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id dwc3_qcom_acpi_match[] = {
++	{ "QCOM0497" },
++	{ "QCOM2430" },
++	{ "QCOM0304" },
++	{ "QCOM04A6" },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, dwc3_qcom_acpi_match);
++#endif
++
+ static struct platform_driver dwc3_qcom_driver = {
+ 	.probe		= dwc3_qcom_probe,
+ 	.remove		= dwc3_qcom_remove,
+@@ -852,6 +907,7 @@
+ 		.name	= "dwc3-qcom",
+ 		.pm	= pm_ptr(&dwc3_qcom_dev_pm_ops),
+ 		.of_match_table	= dwc3_qcom_of_match,
++		.acpi_match_table = ACPI_PTR(dwc3_qcom_acpi_match),
+ 	},
+ };
+ 

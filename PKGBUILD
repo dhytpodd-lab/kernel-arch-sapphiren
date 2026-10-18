@@ -23,6 +23,7 @@ source=("https://www.kernel.org/pub/linux/kernel/v7.x/${_srcname}.tar.xz"
         '0004-serial-amba-pl011-add-arm-pl011-axi-binding-for-RP1.patch'
         '0005-arm64-dts-rpi5-add-RP1-UART0-GPIO14-15-console.patch'
         '0006-ufs-qcom-fix-acpi-boot.patch'
+        '0007-dwc3-qcom-restore-acpi-support.patch'
         'config'
         'generate_chromebook_its.sh'
         'kernel.keyblock'
@@ -36,6 +37,7 @@ md5sums=('b6b169bbd9c9c19857ad16db2ddf8def'
          'a9bcf91cab44e1193240a43189a9313f'
          '24c403d3738a418a67b8c0e7659380aa'
          '2a148cd1f141b2412c48165ce8a03faf'
+          '9bcfbe7ecde8a3335188abb8cd32f19a'
          '76be3295a075eb7fdd07be76394e7463'
          '7c97cf141750ad810235b1ad06eb9f75'
          '61c5ff73c136ed07a7aadbf58db3d96a'
@@ -61,6 +63,7 @@ prepare() {
   git apply ../0004-serial-amba-pl011-add-arm-pl011-axi-binding-for-RP1.patch
   git apply ../0005-arm64-dts-rpi5-add-RP1-UART0-GPIO14-15-console.patch
   git apply ../0006-ufs-qcom-fix-acpi-boot.patch
+  git apply ../0007-dwc3-qcom-restore-acpi-support.patch
 
   cat "${srcdir}/config" > ./.config
 }
