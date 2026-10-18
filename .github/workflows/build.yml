@@ -44,6 +44,10 @@ jobs:
           git apply --check ../0006-ufs-qcom-fix-acpi-boot.patch
           git apply ../0006-ufs-qcom-fix-acpi-boot.patch
 
+          echo "Checking and applying sapphiren ACPI DWC3 patch..."
+          git apply --check ../0007-dwc3-qcom-restore-acpi-support.patch
+          git apply ../0007-dwc3-qcom-restore-acpi-support.patch
+
       - name: Configure kernel
         run: |
           cd linux-7.1

@@ -8,8 +8,8 @@ work out of the box under ACPI.
 
 Signed-off-by: Antigravity <antigravity@local>
 ---
- drivers/usb/dwc3/dwc3-qcom.c | 65 +++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 61 insertions(+), 4 deletions(-)
+ drivers/usb/dwc3/dwc3-qcom.c | 68 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 64 insertions(+), 4 deletions(-)
 
 --- a/drivers/usb/dwc3/dwc3-qcom.c
 +++ b/drivers/usb/dwc3/dwc3-qcom.c
@@ -21,7 +21,7 @@ Signed-off-by: Antigravity <antigravity@local>
  #include "glue.h"
  
  /* USB QSCRATCH Hardware registers */
-@@ -132,6 +133,9 @@
+@@ -132,6 +133,9 @@ static int dwc3_qcom_interconnect_enable(struct dwc3_qcom *qcom)
  {
  	int ret;
  
@@ -31,27 +31,27 @@ Signed-off-by: Antigravity <antigravity@local>
  	ret = icc_enable(qcom->icc_path_ddr);
  	if (ret)
  		return ret;
-@@ -146,6 +150,9 @@
- static int dwc3_qcom_interconnect_disable(struct dwc3_qcom *qcom)
+@@ -147,6 +151,9 @@ static int dwc3_qcom_interconnect_disable(struct dwc3_qcom *qcom)
  {
  	int ret;
-+
+ 
 +	if (has_acpi_companion(qcom->dev))
 +		return 0;
- 
++
  	ret = icc_disable(qcom->icc_path_ddr);
  	if (ret)
-@@ -169,6 +176,9 @@
- 	enum usb_device_speed max_speed;
+ 		return ret;
+@@ -170,6 +177,9 @@ static int dwc3_qcom_interconnect_init(struct dwc3_qcom *qcom)
  	struct device *dev = qcom->dev;
  	int ret;
-+
+ 
 +	if (has_acpi_companion(dev))
 +		return 0;
- 
++
  	qcom->icc_path_ddr = of_icc_get(dev, "usb-ddr");
  	if (IS_ERR(qcom->icc_path_ddr)) {
-@@ -624,34 +634,36 @@
+ 		return dev_err_probe(dev, PTR_ERR(qcom->icc_path_ddr),
+@@ -624,35 +634,37 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  
  	qcom->dev = &pdev->dev;
  
@@ -65,24 +65,6 @@ Signed-off-by: Antigravity <antigravity@local>
 -	if (ret < 0)
 -		return dev_err_probe(dev, ret, "failed to get clocks\n");
 -	qcom->num_clocks = ret;
--
--	ret = reset_control_assert(qcom->resets);
--	if (ret) {
--		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
--		return ret;
--	}
--
--	usleep_range(10, 1000);
--
--	ret = reset_control_deassert(qcom->resets);
--	if (ret) {
--		dev_err(&pdev->dev, "failed to deassert resets, err=%d\n", ret);
--		return ret;
--	}
--
--	ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
--	if (ret < 0)
--		return ret;
 +	if (!has_acpi_companion(dev)) {
 +		qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
 +		if (IS_ERR(qcom->resets)) {
@@ -100,23 +82,38 @@ Signed-off-by: Antigravity <antigravity@local>
 +			dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
 +			return ret;
 +		}
-+
+ 
+-	ret = reset_control_assert(qcom->resets);
+-	if (ret) {
+-		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
+-		return ret;
+-	}
 +		usleep_range(10, 1000);
-+
+ 
+-	usleep_range(10, 1000);
 +		ret = reset_control_deassert(qcom->resets);
 +		if (ret) {
 +			dev_err(&pdev->dev, "failed to deassert resets, err=%d\n", ret);
 +			return ret;
 +		}
-+
+ 
+-	ret = reset_control_deassert(qcom->resets);
+-	if (ret) {
+-		dev_err(&pdev->dev, "failed to deassert resets, err=%d\n", ret);
+-		return ret;
 +		ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
 +		if (ret < 0)
 +			return ret;
-+	}
+ 	}
  
+-	ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
+-	if (ret < 0)
+-		return ret;
+-
  	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
  	if (!r) {
-@@ -668,10 +680,12 @@
+ 		ret = -EINVAL;
+@@ -668,10 +680,12 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  		goto clk_disable;
  	}
  
@@ -133,7 +130,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	/*
-@@ -683,19 +697,49 @@
+@@ -683,19 +697,53 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  	if (ignore_pipe_clk)
  		dwc3_qcom_select_utmi_clk(qcom);
  
@@ -161,6 +158,9 @@ Signed-off-by: Antigravity <antigravity@local>
 +					fwnode_handle_put(fwh);
 +				}
 +			}
++			if (irq < 0) {
++				irq = acpi_register_gsi(NULL, 0x11F, ACPI_LEVEL_SENSITIVE, ACPI_ACTIVE_HIGH);
++			}
 +			if (irq > 0) {
 +				struct resource r_irq = {
 +					.start = irq,
@@ -169,6 +169,7 @@ Signed-off-by: Antigravity <antigravity@local>
 +				};
 +				platform_device_add_resources(pdev, &r_irq, 1);
 +			}
++			dev_info(dev, "dwc3-qcom: ACPI probe initialized, IRQ=%d\n", irq);
 +		}
 +#endif
  	} else {
@@ -192,7 +193,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	qcom->dwc.glue_ops = &dwc3_qcom_glue_ops;
-@@ -844,6 +888,17 @@
+@@ -844,6 +892,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
  };
  MODULE_DEVICE_TABLE(of, dwc3_qcom_of_match);
  
@@ -210,7 +211,7 @@ Signed-off-by: Antigravity <antigravity@local>
  static struct platform_driver dwc3_qcom_driver = {
  	.probe		= dwc3_qcom_probe,
  	.remove		= dwc3_qcom_remove,
-@@ -852,6 +907,7 @@
+@@ -852,6 +911,7 @@ static struct platform_driver dwc3_qcom_driver = {
  		.name	= "dwc3-qcom",
  		.pm	= pm_ptr(&dwc3_qcom_dev_pm_ops),
  		.of_match_table	= dwc3_qcom_of_match,
