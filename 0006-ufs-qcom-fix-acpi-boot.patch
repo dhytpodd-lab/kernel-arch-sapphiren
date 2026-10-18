@@ -1,0 +1,56 @@
+From: Antigravity <antigravity@local>
+Subject: [PATCH] ufs-qcom: fix initialization and link startup on ACPI platforms
+
+When booting via ACPI (e.g. device QCOM24A5), several issues prevent
+the UFS controller from probing successfully:
+
+1. Reset controller: host->rcdev.dev was not set under ACPI, causing
+   a NULL pointer dereference in __dev_fwnode when devm_reset_controller_register()
+   is called. Setting host->rcdev.dev = dev resolves the NULL dereference.
+
+2. Interconnect: devm_of_icc_get() returns -ENODEV under ACPI because
+   dev->of_node is NULL, causing ufs_qcom_icc_init() to fail and abort
+   driver probing. Returning 0 when has_acpi_companion(dev) is true avoids
+   failing the probe, while also ensuring err is cleanly set to 0.
+
+3. Generic PHY: host->generic_phy is NULL under ACPI because the PHY
+   is pre-initialized by firmware. However, ufs_qcom_power_up_sequence()
+   blindly dereferenced phy->power_count, causing a NULL pointer crash at
+   offset 0x344. Returning 0 under ACPI bypasses the PHY power-up sequence
+   safely.
+
+Signed-off-by: Antigravity <antigravity@local>
+---
+ drivers/ufs/host/ufs-qcom.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -493,6 +493,9 @@ static int ufs_qcom_power_up_sequence(struct ufs_hba *hba)
+ 	enum phy_mode mode;
+ 	int ret;
+ 
++	if (has_acpi_companion(hba->dev))
++		return 0;
++
+ 	/*
+ 	 * HW ver 5 can only support up to HS-G5 Rate-A due to HW limitations.
+ 	 * If the HS-G5 PHY gear is used, update host_params->hs_rate to Rate-A,
+@@ -1514,6 +1517,9 @@ static int ufs_qcom_icc_init(struct ufs_qcom_host *host)
+ 	struct device *dev = host->hba->dev;
+ 	int ret;
+ 
++	if (has_acpi_companion(dev))
++		return 0;
++
+ 	host->icc_ddr = devm_of_icc_get(dev, "ufs-ddr");
+ 	if (IS_ERR(host->icc_ddr))
+ 		return dev_err_probe(dev, PTR_ERR(host->icc_ddr),
+@@ -1572,6 +1578,7 @@ static int ufs_qcom_init(struct ufs_hba *hba)
+ 	}
+ 
+ 	/* Fire up the reset controller. Failure here is non-fatal. */
++	host->rcdev.dev = dev;
+ 	host->rcdev.of_node = dev->of_node;
+ 	host->rcdev.ops = &ufs_qcom_reset_ops;
+ 	host->rcdev.owner = dev->driver->owner;

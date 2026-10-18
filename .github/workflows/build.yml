@@ -1,0 +1,86 @@
+name: Build Patched Kernel for sapphiren
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu bison flex libssl-dev libelf-dev bc libncurses-dev kmod xz-utils
+
+      - name: Download Linux kernel source
+        run: |
+          curl -LO https://www.kernel.org/pub/linux/kernel/v7.x/linux-7.1.tar.xz
+          curl -LO https://www.kernel.org/pub/linux/kernel/v7.x/patch-7.1.6.xz
+          tar -xf linux-7.1.tar.xz
+          unxz patch-7.1.6.xz
+
+      - name: Apply patches
+        run: |
+          cd linux-7.1
+          echo "Applying upstream 7.1.6 patch..."
+          git apply --whitespace=nowarn ../patch-7.1.6
+
+          echo "Applying ALARM patches..."
+          git apply ../0001-arm64-dts-rockchip-disable-pwm0-on-rk3399-firefly.patch
+          git apply ../0002-pps-Compatibility-hack-should-be-X86-specific.patch
+          git apply ../0003-Revert-arm64-dts-rockchip-Move-rk3568-PCIe3-MSI-to-u.patch
+          git apply ../0004-serial-amba-pl011-add-arm-pl011-axi-binding-for-RP1.patch
+          git apply ../0005-arm64-dts-rpi5-add-RP1-UART0-GPIO14-15-console.patch
+
+          echo "Checking and applying sapphiren ACPI UFS patch..."
+          git apply --check ../0006-ufs-qcom-fix-acpi-boot.patch
+          git apply ../0006-ufs-qcom-fix-acpi-boot.patch
+
+      - name: Configure kernel
+        run: |
+          cd linux-7.1
+          echo "-1" > localversion.10-pkgrel
+          echo "-aarch64" > localversion.20-pkgname
+          cp ../config .config
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+
+      - name: Build kernel Image
+        run: |
+          cd linux-7.1
+          make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image
+
+      - name: Prepare build artifacts
+        run: |
+          cp linux-7.1/arch/arm64/boot/Image ./vmlinuz-linux
+          sha256sum vmlinuz-linux > sha256sum.txt
+          cat sha256sum.txt
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmlinuz-linux
+          path: vmlinuz-linux
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/main')
+        with:
+          tag_name: v7.1.6-sapphiren
+          name: "Kernel 7.1.6-1 for sapphiren"
+          body: |
+            Patched Arch Linux ARM kernel (7.1.6-1-aarch64) for Xiaomi Redmi Note 13 4G (sapphiren).
+            Includes fixes for ufs-qcom ACPI initialization:
+            - Reset controller registration (`rcdev.dev = dev`)
+            - Interconnect bypass on ACPI (`ufs_qcom_icc_init` returns 0)
+            - PHY power-up sequence bypass on ACPI (`ufs_qcom_power_up_sequence` returns 0)
+          files: |
+            vmlinuz-linux
+            sha256sum.txt
