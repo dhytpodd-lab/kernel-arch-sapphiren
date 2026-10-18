@@ -1,28 +1,23 @@
 From: Antigravity <antigravity@local>
-Subject: [PATCH] ufs-qcom: fix initialization and link startup on ACPI platforms
+Subject: [PATCH] ufs-qcom: use firmware-managed vops and fix initialization on ACPI platforms
 
-When booting via ACPI (e.g. device QCOM24A5), several issues prevent
-the UFS controller from probing successfully:
+When booting via ACPI (device QCOM24A5, e.g. under UEFI firmware), the UFS
+host controller, PHY, and clocks are pre-initialized by system firmware.
+Using the default DeviceTree variant ops (ufs_hba_qcom_vops) breaks boot
+because the driver attempts bare-metal clock scaling, interconnect lookups,
+and reset asserting on cold boot which desynchronizes the link.
 
-1. Reset controller: host->rcdev.dev was not set under ACPI, causing
-   a NULL pointer dereference in __dev_fwnode when devm_reset_controller_register()
-   is called. Setting host->rcdev.dev = dev resolves the NULL dereference.
-
-2. Interconnect: devm_of_icc_get() returns -ENODEV under ACPI because
-   dev->of_node is NULL, causing ufs_qcom_icc_init() to fail and abort
-   driver probing. Returning 0 when has_acpi_companion(dev) is true avoids
-   failing the probe, while also ensuring err is cleanly set to 0.
-
-3. Generic PHY: host->generic_phy is NULL under ACPI because the PHY
-   is pre-initialized by firmware. However, ufs_qcom_power_up_sequence()
-   blindly dereferenced phy->power_count, causing a NULL pointer crash at
-   offset 0x344. Returning 0 under ACPI bypasses the PHY power-up sequence
-   safely.
+Fix this cleanly by:
+1. Routing ACPI platforms to ufs_hba_qcom_sa8255p_vops (firmware-managed design)
+   both in ufs_qcom_probe() and in ufs_qcom_acpi_match[].
+2. For safety, also ensure ufs_qcom_init(), ufs_qcom_icc_init(), and
+   ufs_qcom_power_up_sequence() safely return without NULL dereferences
+   under ACPI.
 
 Signed-off-by: Antigravity <antigravity@local>
 ---
- drivers/ufs/host/ufs-qcom.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ drivers/ufs/host/ufs-qcom.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
 
 --- a/drivers/ufs/host/ufs-qcom.c
 +++ b/drivers/ufs/host/ufs-qcom.c
@@ -54,3 +49,23 @@ Signed-off-by: Antigravity <antigravity@local>
  	host->rcdev.of_node = dev->of_node;
  	host->rcdev.ops = &ufs_qcom_reset_ops;
  	host->rcdev.owner = dev->driver->owner;
+@@ -2972,7 +2979,9 @@ static int ufs_qcom_probe(struct platform_device *pdev)
+ 	const struct ufs_hba_variant_ops *vops;
+ 	const struct ufs_qcom_drvdata *drvdata = device_get_match_data(dev);
+ 
+-	if (drvdata && drvdata->vops)
++	if (has_acpi_companion(dev))
++		vops = &ufs_hba_qcom_sa8255p_vops;
++	else if (drvdata && drvdata->vops)
+ 		vops = drvdata->vops;
+ 	else
+ 		vops = &ufs_hba_qcom_vops;
+@@ -3020,7 +3029,7 @@ MODULE_DEVICE_TABLE(of, ufs_qcom_of_match);
+ 
+ #ifdef CONFIG_ACPI
+ static const struct acpi_device_id ufs_qcom_acpi_match[] = {
+-	{ "QCOM24A5" },
++	{ "QCOM24A5", (kernel_ulong_t)&ufs_qcom_sa8255p_drvdata },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(acpi, ufs_qcom_acpi_match);
