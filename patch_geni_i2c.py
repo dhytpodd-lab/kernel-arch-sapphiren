@@ -6,7 +6,7 @@ import subprocess
 print("=== Starting GENI I2C ACPI Patcher ===")
 
 # ---------------------------------------------------------------------------
-# Patch drivers/i2c/busses/i2c-qcom-geni.c
+# 1. Patch drivers/i2c/busses/i2c-qcom-geni.c
 # ---------------------------------------------------------------------------
 path_i2c = "drivers/i2c/busses/i2c-qcom-geni.c"
 print(f"Patching {path_i2c}...")
@@ -80,9 +80,81 @@ print("  [+] Patched adapter dev_info log")
 with open(path_i2c, "w", encoding="utf-8") as f:
     f.write(s)
 
+# ---------------------------------------------------------------------------
+# 2. Patch drivers/soc/qcom/qcom-geni-se.c
+# ---------------------------------------------------------------------------
+path_se = "drivers/soc/qcom/qcom-geni-se.c"
+print(f"\nPatching {path_se}...")
+with open(path_se, "r", encoding="utf-8") as f:
+    s2 = f.read()
+
+# 6. Fix geni_se_get_qup_hw_version NULL pointer dereference on ACPI (where se->wrapper is NULL)
+orig_hw_ver = """u32 geni_se_get_qup_hw_version(struct geni_se *se)
+{
+\tstruct geni_wrapper *wrapper = se->wrapper;
+
+\treturn readl_relaxed(wrapper->base + QUPV3_HW_VER_REG);
+}"""
+
+new_hw_ver = """u32 geni_se_get_qup_hw_version(struct geni_se *se)
+{
+\tstruct geni_wrapper *wrapper = se->wrapper;
+
+\tif (!wrapper || !wrapper->base)
+\t\treturn 0;
+
+\treturn readl_relaxed(wrapper->base + QUPV3_HW_VER_REG);
+}"""
+
+assert orig_hw_ver in s2, f"geni_se_get_qup_hw_version pattern not found in {path_se}"
+s2 = s2.replace(orig_hw_ver, new_hw_ver)
+print("  [+] Patched geni_se_get_qup_hw_version wrapper null check")
+
+# 7. Safe DMA unprep wrappers
+orig_tx_dma = """void geni_se_tx_dma_unprep(struct geni_se *se, dma_addr_t iova, size_t len)
+{
+\tstruct geni_wrapper *wrapper = se->wrapper;
+
+\tif (!dma_mapping_error(wrapper->dev, iova))"""
+
+new_tx_dma = """void geni_se_tx_dma_unprep(struct geni_se *se, dma_addr_t iova, size_t len)
+{
+\tstruct geni_wrapper *wrapper = se->wrapper;
+
+\tif (!wrapper || !wrapper->dev)
+\t\treturn;
+
+\tif (!dma_mapping_error(wrapper->dev, iova))"""
+
+if orig_tx_dma in s2:
+    s2 = s2.replace(orig_tx_dma, new_tx_dma)
+    print("  [+] Patched geni_se_tx_dma_unprep wrapper null check")
+
+orig_rx_dma = """void geni_se_rx_dma_unprep(struct geni_se *se, dma_addr_t iova, size_t len)
+{
+\tstruct geni_wrapper *wrapper = se->wrapper;
+
+\tif (!dma_mapping_error(wrapper->dev, iova))"""
+
+new_rx_dma = """void geni_se_rx_dma_unprep(struct geni_se *se, dma_addr_t iova, size_t len)
+{
+\tstruct geni_wrapper *wrapper = se->wrapper;
+
+\tif (!wrapper || !wrapper->dev)
+\t\treturn;
+
+\tif (!dma_mapping_error(wrapper->dev, iova))"""
+
+if orig_rx_dma in s2:
+    s2 = s2.replace(orig_rx_dma, new_rx_dma)
+    print("  [+] Patched geni_se_rx_dma_unprep wrapper null check")
+
+with open(path_se, "w", encoding="utf-8") as f:
+    f.write(s2)
+
 print("\n=== All patches applied! Running git diff ===")
 try:
-    diff_out = subprocess.check_output(["git", "diff", path_i2c]).decode("utf-8")
+    diff_out = subprocess.check_output(["git", "diff", path_i2c, path_se]).decode("utf-8")
     print(diff_out)
 except Exception as e:
     print("Could not run git diff:", e)
