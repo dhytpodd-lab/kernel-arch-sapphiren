@@ -23,16 +23,16 @@ Signed-off-by: Antigravity <antigravity@local>
 
 --- a/drivers/i2c/busses/i2c-qcom-geni.c
 +++ b/drivers/i2c/busses/i2c-qcom-geni.c
-@@ -198,7 +198,7 @@ static int geni_i2c_clk_map_idx(struct geni_i2c_dev *gi2c)
- {
- 	const struct geni_i2c_clk_fld *itr;
- 
--	if (clk_get_rate(gi2c->se.clk) == 32 * HZ_PER_MHZ)
-+	if (!IS_ERR_OR_NULL(gi2c->se.clk) && clk_get_rate(gi2c->se.clk) == 32 * HZ_PER_MHZ)
+@@ -209,7 +209,7 @@ static int geni_i2c_clk_map_idx(struct geni_i2c_dev *gi2c)
+ 	 * Preferring 32 MHz merely because DFS supports it breaks I2C
+ 	 * transfers on X1E80100 CRD.
+ 	 */
+-	if (clk_get_rate(gi2c->se.clk) == GENI_SE_CLK_32MHZ) {
++	if (!IS_ERR_OR_NULL(gi2c->se.clk) && clk_get_rate(gi2c->se.clk) == GENI_SE_CLK_32MHZ) {
+ 		req_freq = GENI_SE_CLK_32MHZ;
  		itr = geni_i2c_clk_map_32mhz;
- 	else
- 		itr = geni_i2c_clk_map_19p2mhz;
-@@ -1058,7 +1058,7 @@ static int geni_i2c_init(struct geni_i2c_dev *gi2c)
+ 	} else {
+@@ -1091,7 +1091,7 @@ static int geni_i2c_init(struct geni_i2c_dev *gi2c)
  		goto err;
  	}
  
@@ -41,7 +41,7 @@ Signed-off-by: Antigravity <antigravity@local>
  		fifo_disable = false;
  		gi2c->no_dma = true;
  	} else {
-@@ -1078,8 +1078,8 @@ static int geni_i2c_init(struct geni_i2c_dev *gi2c)
+@@ -1111,8 +1111,8 @@ static int geni_i2c_init(struct geni_i2c_dev *gi2c)
  		tx_depth = geni_se_get_tx_fifo_depth(&gi2c->se);
  
  		/* I2C Master Hub Serial Elements doesn't have the HW_PARAM_0 register */
@@ -52,9 +52,9 @@ Signed-off-by: Antigravity <antigravity@local>
  
  		if (!tx_depth) {
  			ret = dev_err_probe(gi2c->se.dev, -EINVAL,
-@@ -1192,7 +1192,7 @@ static int geni_i2c_probe(struct platform_device *pdev)
- 	if (ret)
+@@ -1226,7 +1226,7 @@ static int geni_i2c_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, ret, "Error adding i2c adapter\n");
+ 	}
  
 -	dev_dbg(dev, "Geni-I2C adaptor successfully added\n");
 +	dev_info(dev, "Geni-I2C adapter %s successfully added\n", gi2c->adap.name);
