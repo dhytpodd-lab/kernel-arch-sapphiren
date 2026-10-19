@@ -48,6 +48,10 @@ jobs:
           git apply --check ../0007-dwc3-qcom-restore-acpi-support.patch
           git apply ../0007-dwc3-qcom-restore-acpi-support.patch
 
+          echo "Checking and applying sapphiren ACPI GENI I2C patch..."
+          git apply --check ../0008-geni-i2c-fix-acpi-support.patch
+          git apply ../0008-geni-i2c-fix-acpi-support.patch
+
       - name: Configure kernel
         run: |
           cd linux-7.1

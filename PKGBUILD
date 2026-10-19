@@ -24,6 +24,7 @@ source=("https://www.kernel.org/pub/linux/kernel/v7.x/${_srcname}.tar.xz"
         '0005-arm64-dts-rpi5-add-RP1-UART0-GPIO14-15-console.patch'
         '0006-ufs-qcom-fix-acpi-boot.patch'
         '0007-dwc3-qcom-restore-acpi-support.patch'
+        '0008-geni-i2c-fix-acpi-support.patch'
         'config'
         'generate_chromebook_its.sh'
         'kernel.keyblock'
@@ -38,6 +39,7 @@ md5sums=('b6b169bbd9c9c19857ad16db2ddf8def'
          '24c403d3738a418a67b8c0e7659380aa'
          '2a148cd1f141b2412c48165ce8a03faf'
          'e3c20404323415b42923a94ad2892c2f'
+         '5c8cca033c264586fb2f20b6a9ee176e'
          '6faac5bd9bb9b9cdaca06b87f8b455b9'
          '7c97cf141750ad810235b1ad06eb9f75'
          '61c5ff73c136ed07a7aadbf58db3d96a'
@@ -64,6 +66,7 @@ prepare() {
   git apply ../0005-arm64-dts-rpi5-add-RP1-UART0-GPIO14-15-console.patch
   git apply ../0006-ufs-qcom-fix-acpi-boot.patch
   git apply ../0007-dwc3-qcom-restore-acpi-support.patch
+  git apply ../0008-geni-i2c-fix-acpi-support.patch
 
   cat "${srcdir}/config" > ./.config
 }
