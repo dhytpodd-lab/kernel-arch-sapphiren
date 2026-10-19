@@ -41,7 +41,30 @@ else:
     s = s.replace(orig_clk, new_clk)
     print("  [+] Patched devm_clk_get error handling via literal match")
 
-# 3. Force FIFO mode on ACPI
+# 3. Ungate GCC QUP0 AHB, Core, and SE2 clocks on ACPI before accessing registers
+orig_acpi_comp = "if (has_acpi_companion(dev))\n\t\tACPI_COMPANION_SET(&gi2c->adap.dev, ACPI_COMPANION(dev));"
+new_acpi_comp = """if (has_acpi_companion(dev)) {
+\t\tvoid __iomem *gcc_base = ioremap(0x01400000, 0x80000);
+\t\tif (gcc_base) {
+\t\t\tu32 val;
+\t\t\t/* Set SE2 RCG clock source to 19.2MHz TCXO (src=0, div=0) */
+\t\t\twritel_relaxed(0x0, gcc_base + 0x1f3ac);
+\t\t\twritel_relaxed(BIT(0), gcc_base + 0x1f3a8);
+\t\t\t/* Enable M_AHB(6), S_AHB(7), Core(8), Core_2X(9), SE2(12) in GCC vote reg */
+\t\t\tval = readl_relaxed(gcc_base + 0x7900c);
+\t\t\tval |= (BIT(6) | BIT(7) | BIT(8) | BIT(9) | BIT(12));
+\t\t\twritel_relaxed(val, gcc_base + 0x7900c);
+\t\t\treadl_relaxed(gcc_base + 0x7900c);
+\t\t\tiounmap(gcc_base);
+\t\t\tdev_info(dev, "ACPI: ungated GCC QUP0 AHB, Core, and SE2 clocks (vote=0x%08x)\\n", val);
+\t\t}
+\t\tACPI_COMPANION_SET(&gi2c->adap.dev, ACPI_COMPANION(dev));
+\t}"""
+assert orig_acpi_comp in s, "ACPI_COMPANION_SET pattern not found in i2c-qcom-geni.c"
+s = s.replace(orig_acpi_comp, new_acpi_comp)
+print("  [+] Injected ACPI GCC QUP0 clock ungate sequence")
+
+# 4. Force FIFO mode on ACPI
 if "if (desc && desc->no_dma_support) {" in s:
     s = s.replace(
         "if (desc && desc->no_dma_support) {",
@@ -57,7 +80,7 @@ elif "if (gi2c->dev_data->no_dma_support) {" in s:
 else:
     print("  [!] Could not find FIFO mode check condition!")
 
-# 4. Safe tx_depth fallback
+# 5. Safe tx_depth fallback
 tx_depth_pattern = r"if\s*\(\s*!tx_depth\s*&&\s*desc\s*\)\s*\n\s*tx_depth\s*=\s*desc->tx_fifo_depth;"
 tx_depth_replacement = "if (!tx_depth)\n\t\t\ttx_depth = desc ? desc->tx_fifo_depth : 16;"
 s, count = re.subn(tx_depth_pattern, tx_depth_replacement, s)
@@ -70,7 +93,7 @@ else:
     if count > 0:
         print("  [+] Patched tx_depth check (dev_data)")
 
-# 5. Informative dev_info log
+# 6. Informative dev_info log
 s = s.replace(
     'dev_dbg(dev, "Geni-I2C adaptor successfully added\\n");',
     'dev_info(dev, "Geni-I2C adapter %s successfully added\\n", gi2c->adap.name);'
@@ -88,7 +111,7 @@ print(f"\nPatching {path_se}...")
 with open(path_se, "r", encoding="utf-8") as f:
     s2 = f.read()
 
-# 6. Fix geni_se_get_qup_hw_version NULL pointer dereference on ACPI (where se->wrapper is NULL)
+# 7. Fix geni_se_get_qup_hw_version NULL pointer dereference on ACPI (where se->wrapper is NULL)
 orig_hw_ver = """u32 geni_se_get_qup_hw_version(struct geni_se *se)
 {
 \tstruct geni_wrapper *wrapper = se->wrapper;
@@ -110,7 +133,7 @@ assert orig_hw_ver in s2, f"geni_se_get_qup_hw_version pattern not found in {pat
 s2 = s2.replace(orig_hw_ver, new_hw_ver)
 print("  [+] Patched geni_se_get_qup_hw_version wrapper null check")
 
-# 7. Safe DMA unprep wrappers
+# 8. Safe DMA unprep wrappers
 orig_tx_dma = """void geni_se_tx_dma_unprep(struct geni_se *se, dma_addr_t iova, size_t len)
 {
 \tstruct geni_wrapper *wrapper = se->wrapper;
