@@ -48,9 +48,8 @@ jobs:
           git apply --check ../0007-dwc3-qcom-restore-acpi-support.patch
           git apply ../0007-dwc3-qcom-restore-acpi-support.patch
 
-          echo "Checking and applying sapphiren ACPI GENI I2C patch..."
-          git apply -v --check ../0008-geni-i2c-fix-acpi-support.patch
-          git apply -v ../0008-geni-i2c-fix-acpi-support.patch
+          echo "Applying sapphiren ACPI GENI I2C patch via patch_geni_i2c.py..."
+          python3 ../patch_geni_i2c.py
 
       - name: Configure kernel
         run: |
