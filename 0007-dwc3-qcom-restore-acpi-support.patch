@@ -1,17 +1,18 @@
 From: Antigravity <antigravity@local>
-Subject: [PATCH] usb: dwc3: restore ACPI host mode support for QCOM0497
+Subject: [PATCH] usb: dwc3: restore ACPI host mode and select UTMI clock for QCOM0497
 
 When booting via ACPI (e.g. Mu-Silicium UEFI), USB controller is described
 as URS0 with HID QCOM0497.
 Restore ACPI matching, release parent umbrella resource to avoid -EBUSY,
-and configure host mode (dr_mode=host, vbus override) so USB keyboards and
-devices work out of the box under ACPI.
+select UTMI clock to avoid PIPE clock timeout, and configure host mode
+(dr_mode=host, maximum-speed=high-speed, vbus override) so USB keyboards
+and devices enumerate and work out of the box under ACPI.
 
 Signed-off-by: Antigravity <antigravity@local>
 ---
- drivers/usb/dwc3/core.c      | 11 ++++++++-
- drivers/usb/dwc3/dwc3-qcom.c | 89 ++++++++++++++++++++++++++++++++++++++++--
- 2 files changed, 97 insertions(+), 3 deletions(-)
+ drivers/usb/dwc3/core.c      | 14 +++++++++-
+ drivers/usb/dwc3/dwc3-qcom.c | 95 ++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 105 insertions(+), 4 deletions(-)
 
 --- a/drivers/usb/dwc3/core.c
 +++ b/drivers/usb/dwc3/core.c
@@ -30,18 +31,22 @@ Signed-off-by: Antigravity <antigravity@local>
  
  	mode = dwc->dr_mode;
  	hw_mode = DWC3_GHWPARAMS0_MODE(dwc->hwparams.hwparams0);
-@@ -1761,6 +1765,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
+@@ -1761,6 +1765,12 @@ static void dwc3_get_properties(struct dwc3 *dwc)
  	dwc->maximum_speed = usb_get_maximum_speed(dev);
  	dwc->max_ssp_rate = usb_get_maximum_ssp_rate(dev);
  	dwc->dr_mode = usb_get_dr_mode(dev);
-+	if (has_acpi_companion(dev) && dwc->dr_mode == USB_DR_MODE_UNKNOWN)
-+		dwc->dr_mode = USB_DR_MODE_HOST;
++	if (has_acpi_companion(dev)) {
++		if (dwc->dr_mode == USB_DR_MODE_UNKNOWN)
++			dwc->dr_mode = USB_DR_MODE_HOST;
++		if (dwc->maximum_speed == USB_SPEED_UNKNOWN)
++			dwc->maximum_speed = USB_SPEED_HIGH;
++	}
  	dwc->hsphy_mode = of_usb_get_phy_mode(dev->of_node);
  
  	dwc->sysdev_is_parent = device_property_read_bool(dev,
 --- a/drivers/usb/dwc3/dwc3-qcom.c
 +++ b/drivers/usb/dwc3/dwc3-qcom.c
-@@ -20,8 +20,17 @@
+@@ -20,8 +20,21 @@
  #include <linux/usb/hcd.h>
  #include <linux/usb.h>
  #include "core.h"
@@ -52,6 +57,10 @@ Signed-off-by: Antigravity <antigravity@local>
 +#ifdef CONFIG_ACPI
 +static const struct property_entry dwc3_acpi_host_props[] = {
 +	PROPERTY_ENTRY_STRING("dr_mode", "host"),
++	PROPERTY_ENTRY_STRING("maximum-speed", "high-speed"),
++	PROPERTY_ENTRY_BOOL("qcom,select-utmi-as-pipe-clk"),
++	PROPERTY_ENTRY_BOOL("snps,has-lpm-erratum"),
++	PROPERTY_ENTRY_BOOL("snps,usb3-u1u2-disable"),
 +	{ }
 +};
 +#endif
@@ -59,7 +68,7 @@ Signed-off-by: Antigravity <antigravity@local>
  /* USB QSCRATCH Hardware registers */
  #define QSCRATCH_HS_PHY_CTRL			0x10
  #define UTMI_OTG_VBUS_VALID			BIT(20)
-@@ -132,6 +141,9 @@ static int dwc3_qcom_interconnect_enable(struct dwc3_qcom *qcom)
+@@ -132,6 +145,9 @@ static int dwc3_qcom_interconnect_enable(struct dwc3_qcom *qcom)
  {
  	int ret;
  
@@ -69,7 +78,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	ret = icc_enable(qcom->icc_path_ddr);
  	if (ret)
  		return ret;
-@@ -147,6 +159,9 @@ static int dwc3_qcom_interconnect_disable(struct dwc3_qcom *qcom)
+@@ -147,6 +163,9 @@ static int dwc3_qcom_interconnect_disable(struct dwc3_qcom *qcom)
  {
  	int ret;
  
@@ -79,7 +88,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	ret = icc_disable(qcom->icc_path_ddr);
  	if (ret)
  		return ret;
-@@ -170,6 +185,9 @@ static int dwc3_qcom_interconnect_init(struct dwc3_qcom *qcom)
+@@ -170,6 +189,9 @@ static int dwc3_qcom_interconnect_init(struct dwc3_qcom *qcom)
  	struct device *dev = qcom->dev;
  	int ret;
  
@@ -89,7 +98,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	qcom->icc_path_ddr = of_icc_get(dev, "usb-ddr");
  	if (IS_ERR(qcom->icc_path_ddr)) {
  		return dev_err_probe(dev, PTR_ERR(qcom->icc_path_ddr),
-@@ -624,35 +642,37 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -624,35 +646,37 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  
  	qcom->dev = &pdev->dev;
  
@@ -151,7 +160,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
  	if (!r) {
  		ret = -EINVAL;
-@@ -661,6 +681,15 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -661,6 +685,15 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  	res = *r;
  	res.end = res.start + SDM845_QSCRATCH_BASE_OFFSET;
  
@@ -167,7 +176,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	qcom->qscratch_base = devm_ioremap(dev, res.end, SDM845_QSCRATCH_SIZE);
  	if (!qcom->qscratch_base) {
  		dev_err(dev, "failed to map qscratch region\n");
-@@ -668,10 +697,12 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -668,10 +701,12 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  		goto clk_disable;
  	}
  
@@ -184,8 +193,12 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	/*
-@@ -683,19 +714,55 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
- 	if (ignore_pipe_clk)
+@@ -680,22 +715,59 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 	 */
+ 	ignore_pipe_clk = device_property_read_bool(dev,
+ 				"qcom,select-utmi-as-pipe-clk");
+-	if (ignore_pipe_clk)
++	if (has_acpi_companion(dev) || ignore_pipe_clk)
  		dwc3_qcom_select_utmi_clk(qcom);
  
 -	qcom->mode = usb_get_dr_mode(dev);
@@ -193,6 +206,7 @@ Signed-off-by: Antigravity <antigravity@local>
 -	if (qcom->mode == USB_DR_MODE_HOST) {
 +	if (has_acpi_companion(dev)) {
 +		device_create_managed_software_node(dev, dwc3_acpi_host_props, NULL);
++		dwc3_qcom_select_utmi_clk(qcom);
 +		qcom->mode = USB_DR_MODE_HOST;
  		qcom->current_role = USB_ROLE_HOST;
 -	} else if (qcom->mode == USB_DR_MODE_PERIPHERAL) {
@@ -248,7 +262,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	qcom->dwc.glue_ops = &dwc3_qcom_glue_ops;
-@@ -844,6 +911,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
+@@ -844,6 +916,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
  };
  MODULE_DEVICE_TABLE(of, dwc3_qcom_of_match);
  
@@ -266,7 +280,7 @@ Signed-off-by: Antigravity <antigravity@local>
  static struct platform_driver dwc3_qcom_driver = {
  	.probe		= dwc3_qcom_probe,
  	.remove		= dwc3_qcom_remove,
-@@ -852,6 +930,7 @@ static struct platform_driver dwc3_qcom_driver = {
+@@ -852,6 +935,7 @@ static struct platform_driver dwc3_qcom_driver = {
  		.name	= "dwc3-qcom",
  		.pm	= pm_ptr(&dwc3_qcom_dev_pm_ops),
  		.of_match_table	= dwc3_qcom_of_match,
