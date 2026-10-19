@@ -8,8 +8,8 @@ work out of the box under ACPI.
 
 Signed-off-by: Antigravity <antigravity@local>
 ---
- drivers/usb/dwc3/dwc3-qcom.c | 68 +++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 64 insertions(+), 4 deletions(-)
+ drivers/usb/dwc3/dwc3-qcom.c | 80 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 75 insertions(+), 5 deletions(-)
 
 --- a/drivers/usb/dwc3/dwc3-qcom.c
 +++ b/drivers/usb/dwc3/dwc3-qcom.c
@@ -113,7 +113,23 @@ Signed-off-by: Antigravity <antigravity@local>
  	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
  	if (!r) {
  		ret = -EINVAL;
-@@ -668,10 +680,12 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -661,6 +673,15 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 	res = *r;
+ 	res.end = res.start + SDM845_QSCRATCH_BASE_OFFSET;
+ 
++	if (has_acpi_companion(dev)) {
++		/*
++		 * Release the ACPI umbrella memory resource from iomem_resource
++		 * so that dwc3_core_probe() and xhci-plat can claim their respective
++		 * non-overlapping sub-regions without -EBUSY.
++		 */
++		release_resource(r);
++	}
++
+ 	qcom->qscratch_base = devm_ioremap(dev, res.end, SDM845_QSCRATCH_SIZE);
+ 	if (!qcom->qscratch_base) {
+ 		dev_err(dev, "failed to map qscratch region\n");
+@@ -668,10 +689,12 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  		goto clk_disable;
  	}
  
@@ -130,7 +146,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	/*
-@@ -683,19 +697,53 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -683,19 +706,54 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  	if (ignore_pipe_clk)
  		dwc3_qcom_select_utmi_clk(qcom);
  
@@ -142,7 +158,7 @@ Signed-off-by: Antigravity <antigravity@local>
  		qcom->current_role = USB_ROLE_HOST;
 -	} else if (qcom->mode == USB_DR_MODE_PERIPHERAL) {
 -		qcom->current_role = USB_ROLE_DEVICE;
--		dwc3_qcom_vbus_override_enable(qcom, true);
+ 		dwc3_qcom_vbus_override_enable(qcom, true);
 +#ifdef CONFIG_ACPI
 +		{
 +			int irq = platform_get_irq(pdev, 0);
@@ -193,7 +209,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	qcom->dwc.glue_ops = &dwc3_qcom_glue_ops;
-@@ -844,6 +892,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
+@@ -844,6 +902,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
  };
  MODULE_DEVICE_TABLE(of, dwc3_qcom_of_match);
  
@@ -211,7 +227,7 @@ Signed-off-by: Antigravity <antigravity@local>
  static struct platform_driver dwc3_qcom_driver = {
  	.probe		= dwc3_qcom_probe,
  	.remove		= dwc3_qcom_remove,
-@@ -852,6 +911,7 @@ static struct platform_driver dwc3_qcom_driver = {
+@@ -852,6 +921,7 @@ static struct platform_driver dwc3_qcom_driver = {
  		.name	= "dwc3-qcom",
  		.pm	= pm_ptr(&dwc3_qcom_dev_pm_ops),
  		.of_match_table	= dwc3_qcom_of_match,
