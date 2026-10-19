@@ -1,18 +1,18 @@
 From: Antigravity <antigravity@local>
-Subject: [PATCH] usb: dwc3: restore ACPI host mode and select UTMI clock for QCOM0497
+Subject: [PATCH] usb: dwc3: tune hsphy and restore ACPI host mode for QCOM0497
 
 When booting via ACPI (e.g. Mu-Silicium UEFI), USB controller is described
 as URS0 with HID QCOM0497.
 Restore ACPI matching, release parent umbrella resource to avoid -EBUSY,
-select UTMI clock to avoid PIPE clock timeout, and configure host mode
-(dr_mode=host, maximum-speed=high-speed, vbus override) so USB keyboards
-and devices enumerate and work out of the box under ACPI.
+select UTMI clock to avoid PIPE clock timeout, apply sapphiren hsphy tuning
+registers, and configure host mode (dr_mode=host, maximum-speed=high-speed,
+vbus override) so USB keyboards and devices work out of the box under ACPI.
 
 Signed-off-by: Antigravity <antigravity@local>
 ---
- drivers/usb/dwc3/core.c      | 14 +++++++++-
- drivers/usb/dwc3/dwc3-qcom.c | 95 ++++++++++++++++++++++++++++++++++++++++--
- 2 files changed, 105 insertions(+), 4 deletions(-)
+ drivers/usb/dwc3/core.c      |  14 +++++-
+ drivers/usb/dwc3/dwc3-qcom.c | 125 ++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 135 insertions(+), 4 deletions(-)
 
 --- a/drivers/usb/dwc3/core.c
 +++ b/drivers/usb/dwc3/core.c
@@ -193,7 +193,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	/*
-@@ -680,22 +715,59 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -680,22 +715,89 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  	 */
  	ignore_pipe_clk = device_property_read_bool(dev,
  				"qcom,select-utmi-as-pipe-clk");
@@ -213,6 +213,36 @@ Signed-off-by: Antigravity <antigravity@local>
 -		qcom->current_role = USB_ROLE_DEVICE;
  		dwc3_qcom_vbus_override_enable(qcom, true);
 +#ifdef CONFIG_ACPI
++		{
++			void __iomem *hsphy = ioremap(0x01613000, 0x110);
++			if (hsphy) {
++				dwc3_qcom_setbits(hsphy, 0x94, BIT(1));
++				dwc3_qcom_setbits(hsphy, 0x50, BIT(1));
++				dwc3_qcom_clrbits(hsphy, 0x54, 0x70);
++				dwc3_qcom_setbits(hsphy, 0x58, BIT(5));
++				dwc3_qcom_clrbits(hsphy, 0xa0, 0x3);
++				dwc3_qcom_setbits(hsphy, 0xa0, 0x2);
++				dwc3_qcom_setbits(hsphy, 0x58, BIT(4));
++				dwc3_qcom_setbits(hsphy, 0x60, BIT(0));
++
++				/* Vendor overrides for sapphiren */
++				writel(0xa6, hsphy + 0x6c);
++				writel(0x8c, hsphy + 0x70);
++				writel(0x16, hsphy + 0x74);
++				readl(hsphy + 0x74);
++
++				dwc3_qcom_setbits(hsphy, 0x5c, BIT(0));
++				dwc3_qcom_setbits(hsphy, 0x64, BIT(3) | BIT(2));
++				dwc3_qcom_setbits(hsphy, 0x3c, BIT(0));
++				dwc3_qcom_clrbits(hsphy, 0x54, BIT(2));
++				dwc3_qcom_clrbits(hsphy, 0x50, BIT(1));
++				dwc3_qcom_clrbits(hsphy, 0x64, BIT(3));
++				dwc3_qcom_clrbits(hsphy, 0x94, BIT(1));
++
++				iounmap(hsphy);
++				dev_info(dev, "dwc3-qcom: ACPI hsphy tuned (0x6c=0xa6, 0x70=0x8c, 0x74=0x16)\n");
++			}
++		}
 +		{
 +			int irq = platform_get_irq(pdev, 0);
 +			if (irq < 0) {
@@ -262,7 +292,7 @@ Signed-off-by: Antigravity <antigravity@local>
  	}
  
  	qcom->dwc.glue_ops = &dwc3_qcom_glue_ops;
-@@ -844,6 +916,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
+@@ -844,6 +946,17 @@ static const struct of_device_id dwc3_qcom_of_match[] = {
  };
  MODULE_DEVICE_TABLE(of, dwc3_qcom_of_match);
  
@@ -280,7 +310,7 @@ Signed-off-by: Antigravity <antigravity@local>
  static struct platform_driver dwc3_qcom_driver = {
  	.probe		= dwc3_qcom_probe,
  	.remove		= dwc3_qcom_remove,
-@@ -852,6 +935,7 @@ static struct platform_driver dwc3_qcom_driver = {
+@@ -852,6 +965,7 @@ static struct platform_driver dwc3_qcom_driver = {
  		.name	= "dwc3-qcom",
  		.pm	= pm_ptr(&dwc3_qcom_dev_pm_ops),
  		.of_match_table	= dwc3_qcom_of_match,
